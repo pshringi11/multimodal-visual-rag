@@ -1,4 +1,3 @@
-
 import os
 import asyncio
 import base64
@@ -50,11 +49,12 @@ class OpenCLIPEmbeddings(Embeddings):
 
 
 def encode_image_to_base64(image_path, max_size=(1024, 1024)):
+    """Resizes and compresses images before sending to Groq to prevent BadRequest Errors."""
     with Image.open(image_path) as img:
         img = img.convert("RGB")
-        img.thumbnail(max_size)  # Resize to fit within 1024x1024 while maintaining aspect ratio
+        img.thumbnail(max_size)  # Keep aspect ratio within limits
         buffered = BytesIO()
-        img.save(buffered, format="JPEG", quality=80)  # Compress JPEG size
+        img.save(buffered, format="JPEG", quality=80)  # Optimize payload size
         return base64.b64encode(buffered.getvalue()).decode('utf-8')
 
 
@@ -128,7 +128,7 @@ if uploaded_file and groq_api_key:
             # Step 1: Direct Similarity Search
             relevant_docs = vectorstore.similarity_search(query, k=2)
 
-            # Step 2: Fallback logic for generic broad questions
+            # Step 2: Fallback logic for generic or broad questions
             if not relevant_docs:
                 all_records = vectorstore._collection.get()
                 if all_records and "metadatas" in all_records and len(all_records["metadatas"]) > 0:
@@ -137,14 +137,14 @@ if uploaded_file and groq_api_key:
                             self.metadata = metadata
                     relevant_docs = [FallbackDoc(meta) for meta in all_records["metadatas"][:2]]
 
-            # Step 3: Display Results & Call LLM
-           if not relevant_docs:
+            # Step 3: Display Results & Query Groq Vision Model
+            if not relevant_docs:
                 st.warning("No relevant pages found in the document for your query.")
             else:
                 content_payload = [
                     {
                         "type": "text", 
-                        "text": f"Answer the user query strictly using the attached document page images.\n\nQuery: {query}"
+                        "text": f"Answer the user query strictly using the attached document page images.\n\nUser Query: {query}"
                     }
                 ]
 
@@ -175,5 +175,6 @@ if uploaded_file and groq_api_key:
                     st.write(response.content)
                 except Exception as e:
                     st.error(f"Groq Vision API Error: {str(e)}")
+
 elif uploaded_file and not groq_api_key:
     st.info("Please enter your Groq API Key in the sidebar or Streamlit Secrets to proceed.")
