@@ -10,7 +10,7 @@ import torch
 import open_clip
 import streamlit as st
 
-from langchain_groq import ChatGroq
+from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.messages import HumanMessage
 from langchain_chroma import Chroma
 from langchain_core.embeddings import Embeddings
@@ -49,12 +49,11 @@ class OpenCLIPEmbeddings(Embeddings):
 
 
 def encode_image_to_base64(image_path, max_size=(1024, 1024)):
-    """Resizes and compresses images before sending to Groq to prevent BadRequest Errors."""
     with Image.open(image_path) as img:
         img = img.convert("RGB")
-        img.thumbnail(max_size)  # Keep aspect ratio within limits
+        img.thumbnail(max_size)
         buffered = BytesIO()
-        img.save(buffered, format="JPEG", quality=80)  # Optimize payload size
+        img.save(buffered, format="JPEG", quality=85)
         return base64.b64encode(buffered.getvalue()).decode('utf-8')
 
 
@@ -94,15 +93,15 @@ def sync_init_and_process(pdf_path, pdf_name):
 
 # Sidebar Credentials Setup
 st.sidebar.header("Configuration")
-groq_api_key = st.sidebar.text_input("Groq API Key", type="password")
-if not groq_api_key:
-    groq_api_key = os.getenv("GROQ_API_KEY")
+gemini_api_key = st.sidebar.text_input("Gemini API Key", type="password")
+if not gemini_api_key:
+    gemini_api_key = os.getenv("GOOGLE_API_KEY")
 
 # Main Interface
 uploaded_file = st.file_uploader("Upload PDF Document", type=["pdf"])
 
-if uploaded_file and groq_api_key:
-    # Reset vectorstore state if a new file is uploaded
+if uploaded_file and gemini_api_key:
+    # Reset state on new file upload
     if "current_file" not in st.session_state or st.session_state.current_file != uploaded_file.name:
         st.session_state.current_file = uploaded_file.name
         if "vectorstore" in st.session_state:
@@ -125,10 +124,10 @@ if uploaded_file and groq_api_key:
         with st.spinner("Retrieving relevant visual pages & generating answer..."):
             vectorstore = st.session_state.vectorstore
             
-            # Step 1: Direct Similarity Search
+            # Step 1: Similarity Search
             relevant_docs = vectorstore.similarity_search(query, k=2)
 
-            # Step 2: Fallback logic for generic or broad questions
+            # Step 2: Fallback logic for generic queries
             if not relevant_docs:
                 all_records = vectorstore._collection.get()
                 if all_records and "metadatas" in all_records and len(all_records["metadatas"]) > 0:
@@ -137,7 +136,7 @@ if uploaded_file and groq_api_key:
                             self.metadata = metadata
                     relevant_docs = [FallbackDoc(meta) for meta in all_records["metadatas"][:2]]
 
-            # Step 3: Display Results & Query Groq Vision Model
+            # Step 3: Call Gemini Vision Model
             if not relevant_docs:
                 st.warning("No relevant pages found in the document for your query.")
             else:
@@ -165,16 +164,16 @@ if uploaded_file and groq_api_key:
                             st.image(img_path, caption=f"Page {page_num}")
 
                 try:
-                    llm_vision = ChatGroq(
-                        groq_api_key=groq_api_key,
-                        model_name="meta-llama/llama-prompt-guard-2-86m",
+                    llm_vision = ChatGoogleGenerativeAI(
+                        google_api_key=gemini_api_key,
+                        model="gemini-2.5-flash",
                         temperature=0.1
                     )
                     response = llm_vision.invoke([HumanMessage(content=content_payload)])
                     st.markdown("### Answer:")
                     st.write(response.content)
                 except Exception as e:
-                    st.error(f"Groq Vision API Error: {str(e)}")
+                    st.error(f"Vision API Error: {str(e)}")
 
-elif uploaded_file and not groq_api_key:
-    st.info("Please enter your Groq API Key in the sidebar or Streamlit Secrets to proceed.")
+elif uploaded_file and not gemini_api_key:
+    st.info("Please enter your Gemini API Key in the sidebar or Streamlit Secrets to proceed.")
