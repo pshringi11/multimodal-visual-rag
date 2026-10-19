@@ -15,6 +15,7 @@ from langchain_core.messages import HumanMessage
 from langchain_chroma import Chroma
 from langchain_core.embeddings import Embeddings
 
+# Page Configuration
 st.set_page_config(page_title="Multimodal Visual RAG", layout="wide")
 st.title("📚 Multimodal Visual RAG Agent")
 
@@ -61,12 +62,13 @@ def sync_init_and_process(pdf_path, pdf_name):
     
     images = convert_from_path(pdf_path, dpi=200)
     db_path = f"./chroma_streamlit_{hash(pdf_name)}"
+    
     vectorstore = Chroma(
         persist_directory=db_path,
         embedding_function=embedding_function
     )
 
-    ids, embeddings_list, metadatas = [], [], []
+    ids, embeddings_list, metadatas, texts = [], [], [], []
     for idx, image in enumerate(images):
         page_num = idx + 1
         img_path = os.path.join(images_dir, f"page_{page_num}.jpg")
@@ -76,48 +78,74 @@ def sync_init_and_process(pdf_path, pdf_name):
         ids.append(f"page_{page_num}")
         embeddings_list.append(img_emb)
         metadatas.append({"page": page_num, "image_path": img_path})
+        texts.append(f"Page {page_num} screenshot from document {pdf_name}")
 
     vectorstore._collection.add(
         ids=ids,
         embeddings=embeddings_list,
-        metadatas=metadatas
+        metadatas=metadatas,
+        documents=texts
     )
     return vectorstore, len(images)
 
 
-# Sidebar Key Entry
+# Sidebar Credentials Setup
+st.sidebar.header("Configuration")
 groq_api_key = st.sidebar.text_input("Groq API Key", type="password")
 if not groq_api_key:
     groq_api_key = os.getenv("GROQ_API_KEY")
 
+# Main Interface
 uploaded_file = st.file_uploader("Upload PDF Document", type=["pdf"])
 
 if uploaded_file and groq_api_key:
+    # Reset vectorstore state if a new file is uploaded
+    if "current_file" not in st.session_state or st.session_state.current_file != uploaded_file.name:
+        st.session_state.current_file = uploaded_file.name
+        if "vectorstore" in st.session_state:
+            del st.session_state["vectorstore"]
+
+    # Indexing PDF
     if "vectorstore" not in st.session_state:
-        with st.spinner("Processing PDF screenshots & indexing embeddings..."):
+        with st.spinner("Processing PDF screenshots & indexing visual embeddings..."):
             temp_path = f"./temp_{uploaded_file.name}"
             with open(temp_path, "wb") as f:
                 f.write(uploaded_file.getbuffer())
             
             vectorstore, total_pages = sync_init_and_process(temp_path, uploaded_file.name)
             st.session_state.vectorstore = vectorstore
-            st.success(f"Indexed {total_pages} pages successfully!")
+            st.success(f"Successfully processed & indexed {total_pages} pages!")
 
+    # Query Handling
     query = st.text_input("Ask a question about the PDF:")
     if query and "vectorstore" in st.session_state:
-        with st.spinner("Retrieving relevant pages & generating response..."):
-            retriever = st.session_state.vectorstore.as_retriever(search_kwargs={"k": 2})
-            relevant_docs = retriever.invoke(query)
+        with st.spinner("Retrieving relevant visual pages & generating answer..."):
+            vectorstore = st.session_state.vectorstore
+            
+            # Step 1: Direct Similarity Search
+            relevant_docs = vectorstore.similarity_search(query, k=2)
 
-            # --- FIX: Handle empty search results ---
+            # Step 2: Fallback logic for generic broad questions
+            if not relevant_docs:
+                all_records = vectorstore._collection.get()
+                if all_records and "metadatas" in all_records and len(all_records["metadatas"]) > 0:
+                    class FallbackDoc:
+                        def __init__(self, metadata):
+                            self.metadata = metadata
+                    relevant_docs = [FallbackDoc(meta) for meta in all_records["metadatas"][:2]]
+
+            # Step 3: Display Results & Call LLM
             if not relevant_docs:
                 st.warning("No relevant pages found in the document for your query.")
             else:
                 content_payload = [
-                    {"type": "text", "text": f"Answer based strictly on the provided page screenshots.\n\nQuery: {query}"}
+                    {
+                        "type": "text", 
+                        "text": f"Answer the query strictly based on the provided page screenshots.\n\nUser Query: {query}"
+                    }
                 ]
 
-                # Create columns safely only when len(relevant_docs) > 0
+                st.write("#### Retrieved Pages:")
                 cols = st.columns(len(relevant_docs))
                 for idx, doc in enumerate(relevant_docs):
                     img_path = doc.metadata.get("image_path")
@@ -139,3 +167,6 @@ if uploaded_file and groq_api_key:
                 response = llm_vision.invoke([HumanMessage(content=content_payload)])
                 st.markdown("### Answer:")
                 st.write(response.content)
+
+elif uploaded_file and not groq_api_key:
+    st.info("Please enter your Groq API Key in the sidebar or Streamlit Secrets to proceed.")
