@@ -109,28 +109,33 @@ if uploaded_file and groq_api_key:
             retriever = st.session_state.vectorstore.as_retriever(search_kwargs={"k": 2})
             relevant_docs = retriever.invoke(query)
 
-            content_payload = [
-                {"type": "text", "text": f"Answer based strictly on the provided page screenshots.\n\nQuery: {query}"}
-            ]
+            # --- FIX: Handle empty search results ---
+            if not relevant_docs:
+                st.warning("No relevant pages found in the document for your query.")
+            else:
+                content_payload = [
+                    {"type": "text", "text": f"Answer based strictly on the provided page screenshots.\n\nQuery: {query}"}
+                ]
 
-            cols = st.columns(len(relevant_docs))
-            for idx, doc in enumerate(relevant_docs):
-                img_path = doc.metadata.get("image_path")
-                page_num = doc.metadata.get("page")
-                if img_path and os.path.exists(img_path):
-                    base64_img = encode_image_to_base64(img_path)
-                    content_payload.append({
-                        "type": "image_url",
-                        "image_url": {"url": f"data:image/jpeg;base64,{base64_img}"}
-                    })
-                    with cols[idx]:
-                        st.image(img_path, caption=f"Page {page_num}")
+                # Create columns safely only when len(relevant_docs) > 0
+                cols = st.columns(len(relevant_docs))
+                for idx, doc in enumerate(relevant_docs):
+                    img_path = doc.metadata.get("image_path")
+                    page_num = doc.metadata.get("page")
+                    if img_path and os.path.exists(img_path):
+                        base64_img = encode_image_to_base64(img_path)
+                        content_payload.append({
+                            "type": "image_url",
+                            "image_url": {"url": f"data:image/jpeg;base64,{base64_img}"}
+                        })
+                        with cols[idx]:
+                            st.image(img_path, caption=f"Page {page_num}")
 
-            llm_vision = ChatGroq(
-                groq_api_key=groq_api_key,
-                model_name="meta-llama/llama-4-scout-17b-16e-instruct",
-                temperature=0.1
-            )
-            response = llm_vision.invoke([HumanMessage(content=content_payload)])
-            st.markdown("### Answer:")
-            st.write(response.content)
+                llm_vision = ChatGroq(
+                    groq_api_key=groq_api_key,
+                    model_name="meta-llama/llama-4-scout-17b-16e-instruct",
+                    temperature=0.1
+                )
+                response = llm_vision.invoke([HumanMessage(content=content_payload)])
+                st.markdown("### Answer:")
+                st.write(response.content)
