@@ -1,0 +1,10 @@
+chainlit>=2.0.0
+pdf2image
+pillow
+torch
+open_clip_torch
+chromadb
+langchain-chroma
+langchain-groq
+langchain-core
+gradio
