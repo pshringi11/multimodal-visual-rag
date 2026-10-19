@@ -48,10 +48,12 @@ class OpenCLIPEmbeddings(Embeddings):
         return image_features.cpu().numpy().tolist()[0]
 
 
-def encode_image_to_base64(image_path):
+def encode_image_to_base64(image_path, max_size=(1024, 1024)):
     with Image.open(image_path) as img:
+        img = img.convert("RGB")
+        img.thumbnail(max_size)  # Resize to fit within 1024x1024 while maintaining aspect ratio
         buffered = BytesIO()
-        img.save(buffered, format="JPEG")
+        img.save(buffered, format="JPEG", quality=80)  # Compress JPEG size
         return base64.b64encode(buffered.getvalue()).decode('utf-8')
 
 
