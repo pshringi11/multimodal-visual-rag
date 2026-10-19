@@ -167,7 +167,7 @@ if uploaded_file and groq_api_key:
                 try:
                     llm_vision = ChatGroq(
                         groq_api_key=groq_api_key,
-                        model_name="llama-3.2-90b-vision-preview",
+                        model_name="llama-3.2-11b-vision-preview",
                         temperature=0.1
                     )
                     response = llm_vision.invoke([HumanMessage(content=content_payload)])
