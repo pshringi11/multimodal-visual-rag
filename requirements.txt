@@ -8,3 +8,4 @@ langchain-chroma
 langchain-groq
 langchain-core
 gradio
+langchain-google-genai
