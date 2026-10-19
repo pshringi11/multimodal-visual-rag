@@ -166,7 +166,7 @@ if uploaded_file and gemini_api_key:
                 try:
                     llm_vision = ChatGoogleGenerativeAI(
                         google_api_key=gemini_api_key,
-                        model="gemini-2.5-flash",
+                        model="gemini-3.8-flash",
                         temperature=0.1
                     )
                     response = llm_vision.invoke([HumanMessage(content=content_payload)])
