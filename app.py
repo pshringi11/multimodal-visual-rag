@@ -119,10 +119,10 @@ if uploaded_file and gemini_api_key:
             st.session_state.vectorstore = vectorstore
             st.success(f"Successfully processed & indexed {total_pages} pages!")
 
-    # Query Handling
+    # Direct Q&A Interface
     query = st.text_input("Ask a question about the PDF:")
     if query and "vectorstore" in st.session_state:
-        with st.spinner("Retrieving relevant visual pages & generating answer..."):
+        with st.spinner("Analyzing document & generating answer..."):
             vectorstore = st.session_state.vectorstore
             
             # Step 1: Similarity Search
@@ -137,7 +137,7 @@ if uploaded_file and gemini_api_key:
                             self.metadata = metadata
                     relevant_docs = [FallbackDoc(meta) for meta in all_records["metadatas"][:2]]
 
-            # Step 3: Process Pages and Query Gemini Vision Models with Fallback
+            # Step 3: Process Pages behind the scenes & Query Gemini
             if not relevant_docs:
                 st.warning("No relevant pages found in the document for your query.")
             else:
@@ -148,11 +148,9 @@ if uploaded_file and gemini_api_key:
                     }
                 ]
 
-                st.write("#### Retrieved Pages:")
-                cols = st.columns(len(relevant_docs))
-                for idx, doc in enumerate(relevant_docs):
+                # Prepare image payload in background without showing images in UI
+                for doc in relevant_docs:
                     img_path = doc.metadata.get("image_path")
-                    page_num = doc.metadata.get("page")
                     if img_path and os.path.exists(img_path):
                         base64_img = encode_image_to_base64(img_path)
                         content_payload.append({
@@ -161,10 +159,8 @@ if uploaded_file and gemini_api_key:
                                 "url": f"data:image/jpeg;base64,{base64_img}"
                             }
                         })
-                        with cols[idx]:
-                            st.image(img_path, caption=f"Page {page_num}")
 
-                # Candidate Vision models to attempt in sequence
+                # Candidate Vision models sequence
                 candidate_models = [
                     "gemini-3.8-flash",
                     "gemini-2.5-pro",
@@ -187,7 +183,7 @@ if uploaded_file and gemini_api_key:
                         res = llm_vision.invoke([HumanMessage(content=content_payload)])
                         response_content = res.content
                         successful_model = model_name
-                        break  # Stop execution upon first successful model call
+                        break
                     except Exception as e:
                         last_error = str(e)
                         continue
@@ -196,7 +192,7 @@ if uploaded_file and gemini_api_key:
                     st.divider()
                     st.subheader("💡 Answer")
 
-                    # Parse output format (Extract text if returned as structured list/dict)
+                    # Parse output format cleanly
                     parsed_text = ""
                     if isinstance(response_content, list):
                         for block in response_content:
@@ -207,7 +203,7 @@ if uploaded_file and gemini_api_key:
                     else:
                         parsed_text = str(response_content)
 
-                    # Replace literal escaped newlines with actual line breaks
+                    # Replace literal escaped newlines
                     parsed_text = parsed_text.replace("\\n", "\n")
 
                     # Render answer inside a clean Streamlit UI card
