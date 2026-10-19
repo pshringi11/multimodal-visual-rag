@@ -1,3 +1,4 @@
+
 import os
 import asyncio
 import base64
@@ -137,13 +138,13 @@ if uploaded_file and groq_api_key:
                     relevant_docs = [FallbackDoc(meta) for meta in all_records["metadatas"][:2]]
 
             # Step 3: Display Results & Call LLM
-            if not relevant_docs:
+           if not relevant_docs:
                 st.warning("No relevant pages found in the document for your query.")
             else:
                 content_payload = [
                     {
                         "type": "text", 
-                        "text": f"Answer the query strictly based on the provided page screenshots.\n\nUser Query: {query}"
+                        "text": f"Answer the user query strictly using the attached document page images.\n\nQuery: {query}"
                     }
                 ]
 
@@ -156,19 +157,23 @@ if uploaded_file and groq_api_key:
                         base64_img = encode_image_to_base64(img_path)
                         content_payload.append({
                             "type": "image_url",
-                            "image_url": {"url": f"data:image/jpeg;base64,{base64_img}"}
+                            "image_url": {
+                                "url": f"data:image/jpeg;base64,{base64_img}"
+                            }
                         })
                         with cols[idx]:
                             st.image(img_path, caption=f"Page {page_num}")
 
-                llm_vision = ChatGroq(
-                    groq_api_key=groq_api_key,
-                    model_name="llama-3.2-11b-vision-preview",  # Updated to active Groq Vision model
-                    temperature=0.1
-                )
-                response = llm_vision.invoke([HumanMessage(content=content_payload)])
-                st.markdown("### Answer:")
-                st.write(response.content)
-
+                try:
+                    llm_vision = ChatGroq(
+                        groq_api_key=groq_api_key,
+                        model_name="llama-3.2-11b-vision-preview",
+                        temperature=0.1
+                    )
+                    response = llm_vision.invoke([HumanMessage(content=content_payload)])
+                    st.markdown("### Answer:")
+                    st.write(response.content)
+                except Exception as e:
+                    st.error(f"Groq Vision API Error: {str(e)}")
 elif uploaded_file and not groq_api_key:
     st.info("Please enter your Groq API Key in the sidebar or Streamlit Secrets to proceed.")
