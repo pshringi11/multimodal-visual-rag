@@ -5,54 +5,15 @@ from io import BytesIO
 from PIL import Image
 from pdf2image import convert_from_path
 
-import torch
-import open_clip
 import streamlit as st
-
+from langchain_community.embeddings import OpenRouterEmbeddings
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.messages import HumanMessage
 from langchain_chroma import Chroma
-from langchain_core.embeddings import Embeddings
 
 # Page Configuration
 st.set_page_config(page_title="Multimodal Visual RAG", layout="wide")
 st.title("📚 Multimodal Visual RAG Agent")
-
-
-@st.cache_resource(show_spinner=False)
-def load_openclip_model():
-    """Cache OpenCLIP model in memory so it doesn't reload on every rerun."""
-    device = "cuda" if torch.cuda.is_available() else "cpu"
-    model, _, preprocess = open_clip.create_model_and_transforms(
-        "ViT-B-32", pretrained="laion2b_s34b_b79k", device=device
-    )
-    tokenizer = open_clip.get_tokenizer("ViT-B-32")
-    model.eval()
-    return model, preprocess, tokenizer, device
-
-
-class OpenCLIPEmbeddings(Embeddings):
-    def __init__(self):
-        self.model, self.preprocess, self.tokenizer, self.device = load_openclip_model()
-
-    def embed_documents(self, texts):
-        text_tokens = self.tokenizer(texts).to(self.device)
-        with torch.no_grad():
-            text_features = self.model.encode_text(text_tokens)
-            text_features /= text_features.norm(dim=-1, keepdim=True)
-        return text_features.cpu().numpy().tolist()
-
-    def embed_query(self, text):
-        return self.embed_documents([text])[0]
-
-    def embed_image(self, image_path):
-        with Image.open(image_path) as img:
-            image = img.convert("RGB")
-            image_input = self.preprocess(image).unsqueeze(0).to(self.device)
-            with torch.no_grad():
-                image_features = self.model.encode_image(image_input)
-                image_features /= image_features.norm(dim=-1, keepdim=True)
-            return image_features.cpu().numpy().tolist()[0]
 
 
 def encode_image_to_base64(image_path, max_size=(800, 800)):
@@ -65,12 +26,17 @@ def encode_image_to_base64(image_path, max_size=(800, 800)):
         return base64.b64encode(buffered.getvalue()).decode('utf-8')
 
 
-def sync_init_and_process(pdf_path, pdf_name):
-    embedding_function = OpenCLIPEmbeddings()
+def sync_init_and_process(pdf_path, pdf_name, openrouter_key):
+    # Initialize OpenRouter API Embeddings using NVIDIA Nemotron
+    embedding_function = OpenRouterEmbeddings(
+        openrouter_api_key=openrouter_key,
+        model="nvidia/nemotron-3.5-embed-1b:free"
+    )
+
     images_dir = f"./pdf_screenshots_{abs(hash(pdf_name))}"
     os.makedirs(images_dir, exist_ok=True)
     
-    # Reduced DPI from 200 to 100 to avoid RAM spike on Streamlit Cloud
+    # Render PDF pages to screenshots
     images = convert_from_path(pdf_path, dpi=100)
     db_path = f"./chroma_streamlit_{abs(hash(pdf_name))}"
     
@@ -79,27 +45,22 @@ def sync_init_and_process(pdf_path, pdf_name):
         embedding_function=embedding_function
     )
 
-    ids, embeddings_list, metadatas, texts = [], [], [], []
+    ids, metadatas, texts = [], [], []
     
     for idx, image in enumerate(images):
         page_num = idx + 1
         img_path = os.path.join(images_dir, f"page_{page_num}.jpg")
         image.save(img_path, "JPEG", quality=80)
         
-        # Calculate image embedding
-        img_emb = embedding_function.embed_image(img_path)
-        
         ids.append(f"page_{page_num}")
-        embeddings_list.append(img_emb)
         metadatas.append({"page": page_num, "image_path": img_path})
-        texts.append(f"Page {page_num} screenshot from document {pdf_name}")
+        texts.append(f"Page {page_num} screenshot content from document {pdf_name}")
 
-    # Add to vector database
-    vectorstore._collection.add(
+    # Add text descriptions to ChromaDB (Embeddings API calls OpenRouter automatically)
+    vectorstore.add_texts(
         ids=ids,
-        embeddings=embeddings_list,
-        metadatas=metadatas,
-        documents=texts
+        texts=texts,
+        metadatas=metadatas
     )
     
     # Cleanup memory
@@ -111,6 +72,10 @@ def sync_init_and_process(pdf_path, pdf_name):
 
 # Sidebar Credentials Setup
 st.sidebar.header("Configuration")
+openrouter_api_key = st.sidebar.text_input("OpenRouter API Key", type="password")
+if not openrouter_api_key:
+    openrouter_api_key = os.getenv("OPENROUTER_API_KEY")
+
 gemini_api_key = st.sidebar.text_input("Gemini API Key", type="password")
 if not gemini_api_key:
     gemini_api_key = os.getenv("GOOGLE_API_KEY")
@@ -118,7 +83,7 @@ if not gemini_api_key:
 # Main Interface
 uploaded_file = st.file_uploader("Upload PDF Document", type=["pdf"])
 
-if uploaded_file and gemini_api_key:
+if uploaded_file and openrouter_api_key and gemini_api_key:
     # Reset vectorstore state if a new file is uploaded
     if "current_file" not in st.session_state or st.session_state.current_file != uploaded_file.name:
         st.session_state.current_file = uploaded_file.name
@@ -127,12 +92,14 @@ if uploaded_file and gemini_api_key:
 
     # Indexing PDF
     if "vectorstore" not in st.session_state:
-        with st.spinner("Processing PDF screenshots & indexing visual embeddings..."):
+        with st.spinner("Processing PDF screenshots & indexing embeddings via OpenRouter (NVIDIA Nemotron)..."):
             temp_path = f"./temp_{uploaded_file.name}"
             with open(temp_path, "wb") as f:
                 f.write(uploaded_file.getbuffer())
             
-            vectorstore, total_pages = sync_init_and_process(temp_path, uploaded_file.name)
+            vectorstore, total_pages = sync_init_and_process(
+                temp_path, uploaded_file.name, openrouter_api_key
+            )
             st.session_state.vectorstore = vectorstore
             
             # Clean temp pdf file
@@ -147,7 +114,7 @@ if uploaded_file and gemini_api_key:
         with st.spinner("Analyzing document & generating answer..."):
             vectorstore = st.session_state.vectorstore
             
-            # Step 1: Similarity Search
+            # Step 1: Similarity Search via OpenRouter Embeddings
             relevant_docs = vectorstore.similarity_search(query, k=2)
 
             # Step 2: Fallback logic for generic queries
@@ -235,5 +202,5 @@ if uploaded_file and gemini_api_key:
                 else:
                     st.error(f"All candidate Vision models failed. Last error: {last_error}")
 
-elif uploaded_file and not gemini_api_key:
-    st.info("Please enter your Gemini API Key in the sidebar or Streamlit Secrets to proceed.")
+elif uploaded_file and (not openrouter_api_key or not gemini_api_key):
+    st.info("Please enter both OpenRouter API Key and Gemini API Key in the sidebar or Streamlit Secrets to proceed.")
