@@ -6,7 +6,7 @@ from PIL import Image
 from pdf2image import convert_from_path
 
 import streamlit as st
-from langchain_community.embeddings import OpenRouterEmbeddings
+from langchain_community.embeddings import OpenAIEmbeddings
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.messages import HumanMessage
 from langchain_chroma import Chroma
@@ -27,9 +27,10 @@ def encode_image_to_base64(image_path, max_size=(800, 800)):
 
 
 def sync_init_and_process(pdf_path, pdf_name, openrouter_key):
-    # Initialize OpenRouter API Embeddings using NVIDIA Nemotron
-    embedding_function = OpenRouterEmbeddings(
-        openrouter_api_key=openrouter_key,
+    # OpenRouter API Embeddings via langchain_community.embeddings.OpenAIEmbeddings
+    embedding_function = OpenAIEmbeddings(
+        openai_api_key=openrouter_key,
+        openai_api_base="https://openrouter.ai/api/v1",
         model="nvidia/nemotron-3.5-embed-1b:free"
     )
 
