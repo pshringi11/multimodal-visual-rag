@@ -1,11 +1,9 @@
 streamlit
 pdf2image
-pillow
-torch
-open_clip_torch
+Pillow
 chromadb
-langchain-chroma
-langchain-groq
+langchain
 langchain-core
-gradio
+langchain-community
 langchain-google-genai
+langchain-chroma
